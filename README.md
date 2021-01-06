@@ -1,4 +1,4 @@
-# DllInjector
+# DLLInjector
 Simple Windows DLL Injector via command line. Creates a thread in the target process, which calls LoadLibrary to load the DLL. Can load and unload DLLs.
 
 ## Usage

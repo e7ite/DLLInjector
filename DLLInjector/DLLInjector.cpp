@@ -35,6 +35,12 @@ HMODULE GetDllHandle(LPCTSTR dllName, DWORD processID);
  */
 DWORD GetProcessID(LPCTSTR processName);
 
+/**
+ * Wrapper to Win32 handles to faciliate freeing of OS resources upon termination
+ * of program.
+ * NOTE: Make sure to not terminate program such as using exit() as this will 
+ * not invoke the destructor to release the resources
+ */
 struct HandleManager
 {
     HANDLE handle;
@@ -46,13 +52,21 @@ struct HandleManager
 
     ~HandleManager() 
     {
-        if (this->handle != nullptr && CloseHandle(this->handle) == FALSE)
+        if (this->handle != nullptr && !CloseHandle(this->handle))
+        {
             ReportError(TEXT("CloseHandle"));
+        }
     }
 
     operator HANDLE() { return this->handle; }
 };
 
+/**
+ * Creates and manages memory allocated in the virtual address space of the
+ * program. Simply pass in what you wish to store, which process, and the size.
+ * NOTE: Make sure to not terminate program such as using exit() as this will 
+ * not invoke the destructor to release the resources
+ */
 struct ExternMemManager
 {
     LPVOID base;
@@ -60,18 +74,32 @@ struct ExternMemManager
 
     ExternMemManager(HANDLE process, LPVOID buffer, DWORD size) : process(process)
     {
+        // Reserve and commit memory in the virtual address space of the target program.
+        // If this fails, we do not want to continue any more destruction just to 
+        // avoid any further complications
         this->base= VirtualAllocEx(this->process, nullptr, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
         if (this->base == nullptr)
+        {
             ReportError(TEXT("VirtualAllocEx"));
+            exit(EXIT_FAILURE);
+        }
 
-        if (WriteProcessMemory(this->process, this->base, buffer, size, nullptr) == FALSE)
+        // Store the buffer into this newly allocated memory for the remote process.
+        if (!WriteProcessMemory(this->process, this->base, buffer, size, nullptr))
+        {
             ReportError(TEXT("WriteProcessMemory"));
+            exit(EXIT_FAILURE);
+        }
     }
 
     ~ExternMemManager() 
     { 
+        // Free the allocated resource for the target process
         if (!VirtualFreeEx(this->process, this->base, 0, MEM_RELEASE))
+        {
             ReportError(TEXT("VirtualFreeEx")); 
+            exit(EXIT_FAILURE);
+        }
     }
 
     operator LPVOID() { return this->base; }
@@ -151,6 +179,8 @@ HMODULE GetDllHandle(LPCTSTR dllName, DWORD processID)
         if (!lstrcmp(moduleInfo.szModule, dllName))
             return moduleInfo.hModule;
     while (Module32Next(modulesSnap, &moduleInfo));
+
+    return nullptr;
 }
 
 int _tmain(int argc, const TCHAR **argv)
@@ -196,7 +226,6 @@ int _tmain(int argc, const TCHAR **argv)
     LPTHREAD_START_ROUTINE onStart = nullptr;
     const char *onStartStr = nullptr;
     HMODULE kernelDllHandle = GetModuleHandle(TEXT("kernel32"));
-
     if (!lstrcmp(argv[2], TEXT("load")))
     {
         onStartStr = LOADLIBRARYSTR;
